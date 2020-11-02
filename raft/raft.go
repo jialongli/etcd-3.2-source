@@ -525,6 +525,7 @@ func (r *raft) sendHeartbeat(to uint64, ctx []byte) {
 	r.send(m)
 }
 
+//=====[put]第一步,leader会发送put消息给所有的节点
 // bcastAppend sends RPC, with entries to all peers that are not up-to-date
 // according to the progress recorded in r.prs.
 func (r *raft) bcastAppend() {
@@ -1082,9 +1083,20 @@ func stepLeader(r *raft, m pb.Message) error {
 		if !r.appendEntry(m.Entries...) {
 			return ErrProposalDropped
 		}
+		//!!!!广播
 		r.bcastAppend()
 		return nil
 	case pb.MsgReadIndex:
+		/**
+		=========[raft.go][stepLeader]leader会处理readIndex请求.====
+		1.如果是单机模式,那么就把raftLog中的提交id返回回去
+		2.如果不是,那么
+		   2.1ReadOnlySafe
+		      !!!重点是这种,平时调用的是这个,
+		   2.2ReadOnlyLeaseBased
+		       这种是直接返回本机的
+		*/
+
 		// only one voting member (the leader) in the cluster
 		if r.prs.IsSingleton() {
 			if resp := r.responseToReadIndexReq(m, r.raftLog.committed); resp.To != None {

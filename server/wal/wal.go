@@ -879,11 +879,14 @@ func (w *WAL) Close() error {
 
 func (w *WAL) saveEntry(e *raftpb.Entry) error {
 	// TODO: add MustMarshalTo to reduce one allocation.
+	//1.序列化entry
 	b := pbutil.MustMarshal(e)
 	rec := &walpb.Record{Type: entryType, Data: b}
+	//2.写入逻辑
 	if err := w.encoder.encode(rec); err != nil {
 		return err
 	}
+	//3.设置最新的wal的index
 	w.enti = e.Index
 	return nil
 }

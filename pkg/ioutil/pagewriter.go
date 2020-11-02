@@ -50,6 +50,7 @@ func NewPageWriter(w io.Writer, pageBytes, pageOffset int) *PageWriter {
 	}
 }
 
+//=======[put]向page中写入数据===========
 func (pw *PageWriter) Write(p []byte) (n int, err error) {
 	if len(p)+pw.bufferedBytes <= pw.bufWatermarkBytes {
 		// no overflow

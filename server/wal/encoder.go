@@ -59,6 +59,7 @@ func newFileEncoder(f *os.File, prevCrc uint32) (*encoder, error) {
 	return newEncoder(f, prevCrc, int(offset)), nil
 }
 
+//=====[put]encoder.pageWriter将数据写入到boltdb的page中=======
 func (e *encoder) encode(rec *walpb.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -92,6 +93,7 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	if padBytes != 0 {
 		data = append(data, make([]byte, padBytes)...)
 	}
+	//写入逻辑
 	n, err = e.bw.Write(data)
 	walWriteBytes.Add(float64(n))
 	return err

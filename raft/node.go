@@ -17,6 +17,7 @@ package raft
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	pb "go.etcd.io/etcd/raft/v3/raftpb"
 )
@@ -295,6 +296,9 @@ func (n *node) Stop() {
 	<-n.done
 }
 
+/**
+死循环,监听
+*/
 func (n *node) run() {
 	var propc chan msgWithResult
 	var readyc chan Ready
@@ -318,6 +322,7 @@ func (n *node) run() {
 			// it simplifies testing (by emitting less frequently and more
 			// predictably).
 			rd = n.rn.readyWithoutAccept()
+			fmt.Println("获取ready事件")
 			readyc = n.readyc
 		}
 
@@ -341,6 +346,8 @@ func (n *node) run() {
 		// described in raft dissertation)
 		// Currently it is dropped in Step silently.
 		case pm := <-propc:
+			//
+			fmt.Println("[node.go][run][propC]Node收到一个propc,要进行处理了")
 			m := pm.m
 			m.From = r.id
 			err := r.Step(m)
@@ -349,6 +356,7 @@ func (n *node) run() {
 				close(pm.result)
 			}
 		case m := <-n.recvc:
+			fmt.Println("[node.go][run][propC]Node收到一个recvc,要进行处理了")
 			// filter out response message from unknown From.
 			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
 				r.Step(m)
@@ -387,6 +395,7 @@ func (n *node) run() {
 		case <-n.tickc:
 			n.rn.Tick()
 		case readyc <- rd:
+			fmt.Println("将ready事件写入readyChannel")
 			n.rn.acceptReady(rd)
 			advancec = n.advancec
 		case <-advancec:
@@ -452,6 +461,7 @@ func (n *node) stepWait(ctx context.Context, m pb.Message) error {
 	return n.stepWithWaitOption(ctx, m, true)
 }
 
+//=======将封装后的msgProp请求发送到channel进行处理========
 // Step advances the state machine using msgs. The ctx.Err() will be returned,
 // if any.
 func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) error {
@@ -471,6 +481,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		pm.result = make(chan error, 1)
 	}
 	select {
+	//1.把msg写入到propchannel中,这里会等待结果的.那么哪里又会处理propC这个请求呢????移步  node.go--[run]方法,这里会一直监听propC
 	case ch <- pm:
 		if !wait {
 			return nil
@@ -481,6 +492,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		return ErrStopped
 	}
 	select {
+	//2.这里会等待,如果返回了异常,会把异常返回回去,如果没有就返回nil.
 	case err := <-pm.result:
 		if err != nil {
 			return err
@@ -493,6 +505,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	return nil
 }
 
+//封装成一个ready事件
 func (n *node) Ready() <-chan Ready { return n.readyc }
 
 func (n *node) Advance() {

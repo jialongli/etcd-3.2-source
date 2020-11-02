@@ -289,7 +289,7 @@ func (t *batchTxBuffered) CommitAndStop() {
 }
 
 func (t *batchTxBuffered) commit(stop bool) {
-	//!!!!!注意,这里会将读锁升级为写锁,如果这时候有读锁,那么会导致一直升级不了
+	//!!!!!注意,这里会将读锁升级为写锁,如果这时候有大量读事务,那么会导致一直升级不了.同样,在写锁未释放之前,所有读操作都会阻塞.
 	// all read txs must be closed to acquire boltdb commit rwlock
 	t.backend.readTx.Lock()
 	t.unsafeCommit(stop)

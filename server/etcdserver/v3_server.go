@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -681,6 +682,7 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 	defer cancel()
 
 	start := time.Now()
+	//===!!!核心逻辑.处理请求=======
 	err = s.r.Propose(cctx, data)
 	if err != nil {
 		proposalsFailed.Inc()
@@ -706,7 +708,9 @@ func (s *EtcdServer) processInternalRaftRequestOnce(ctx context.Context, r pb.In
 func (s *EtcdServer) Watchable() mvcc.WatchableKV { return s.KV() }
 
 /**
-线性读操作
+死循环
+1.读的时候,会发送一个readWaitC消息
+2.
 */
 func (s *EtcdServer) linearizableReadLoop() {
 	var rs raft.ReadState
@@ -720,6 +724,9 @@ func (s *EtcdServer) linearizableReadLoop() {
 		case <-leaderChangedNotifier:
 			continue
 		case <-s.readwaitc:
+			//1.我接收到了读事务的请求
+			//注意这里,因为readWaitc最多只有两个.
+			fmt.Println("[linearizableReadLoop]我已经接受到readWaitChannel的数据.")
 		case <-s.stopping:
 			return
 		}
@@ -736,6 +743,9 @@ func (s *EtcdServer) linearizableReadLoop() {
 
 		lg := s.getLogger()
 		cctx, cancel := context.WithTimeout(context.Background(), s.Cfg.ReqTimeout())
+		//2.读取readIndex.
+		//  2.1 如果是leader,那么发送心跳给follower
+		//  2.2 如果是follower,那么获取commitIndex从leader
 		if err := s.r.ReadIndex(cctx, ctxToSend); err != nil {
 			cancel()
 			if err == raft.ErrStopped {
@@ -756,6 +766,7 @@ func (s *EtcdServer) linearizableReadLoop() {
 			select {
 			case rs = <-s.r.readStateC:
 				done = bytes.Equal(rs.RequestCtx, ctxToSend)
+				fmt.Println("=======v3_server.go  linearizableReadLoop========")
 				if !done {
 					// a previous request might time out. now we should ignore the response of it and
 					// continue waiting for the response of the current requests.
@@ -814,19 +825,25 @@ func (s *EtcdServer) LinearizableReadNotify(ctx context.Context) error {
 	return s.linearizableReadNotify(ctx)
 }
 
+//这个方法,用来获取
 func (s *EtcdServer) linearizableReadNotify(ctx context.Context) error {
+	//1.这里获取通知.这是个[读锁],也就是所有的读请求都可以拿到readNotifier这个channel,当有channel
 	s.readMu.RLock()
 	nc := s.readNotifier
 	s.readMu.RUnlock()
 
 	// signal linearizable loop for current notify if it hasn't been already
 	select {
+	//2.写入一个readWait到channel中
 	case s.readwaitc <- struct{}{}:
+		fmt.Println("[readWaitChannel]写入一个readWait的消息,告诉etcdServer,我要读数据,快校验下我可不可以读数据!!")
 	default:
+		fmt.Println("[readWaitChannel]当前已经写不进去了,说明请求数>=2了,说明并发挺高的,那就别人可写 我也可写了")
 	}
 
 	// wait for read state notification
 	select {
+	//3.等待通知,如果applyIndex>=commitIndex,就可以处理请求,否则,会返回error的
 	case <-nc.c:
 		return nc.err
 	case <-ctx.Done():

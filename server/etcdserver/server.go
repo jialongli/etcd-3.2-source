@@ -208,9 +208,15 @@ type EtcdServer struct {
 	w wait.Wait
 
 	readMu sync.RWMutex
+
+	//=======告诉etcdServer这里有个读协程正在等待读数据呢===============
 	// read routine notifies etcd server that it waits for reading by sending an empty struct to
 	// readwaitC
 	readwaitc chan struct{}
+
+	/**
+	=====通知读协程,可以处理请求啦,因为已经校验了当前节点的applyIndex>=commitIndex======
+	*/
 	// readNotifier is used to notify the read routine that it can process the request
 	// when there is no error
 	readNotifier *notifier
@@ -369,6 +375,7 @@ func NewServer(cfg ServerConfig) (srv *EtcdServer, err error) {
 		cl.SetID(types.ID(0), existingCluster.ID())
 		cl.SetStore(st)
 		cl.SetBackend(be)
+		//===确定node逻辑=====
 		id, n, s, w = startNode(cfg, cl, nil)
 		cl.SetID(id, existingCluster.ID())
 
@@ -711,6 +718,7 @@ func (s *EtcdServer) Start() {
 	s.GoAttach(s.purgeFile)
 	s.GoAttach(func() { monitorFileDescriptor(s.getLogger(), s.stopping) })
 	s.GoAttach(s.monitorVersions)
+	//读操作的时候,会判断当前节点是否可以处理这个读请求.这里就是个死循环,如果是leader,那么会去发送心跳,如果是follower,那么会去leader获取index
 	s.GoAttach(s.linearizableReadLoop)
 	s.GoAttach(s.monitorKVHash)
 	s.GoAttach(s.monitorDowngrade)
@@ -981,6 +989,7 @@ func (s *EtcdServer) run() {
 				s.stats.BecomeLeader()
 			}
 		},
+		//====更新commitIndex方法.逻辑:获取当前EtcdServer存储的index,如果传过来的大,那么就设置为传过来的?那么说明有可能别的地方也会更新这个committedIndex=====
 		updateCommittedIndex: func(ci uint64) {
 			cci := s.getCommittedIndex()
 			if ci > cci {
@@ -1043,6 +1052,7 @@ func (s *EtcdServer) run() {
 		select {
 		//======当收到apply的消息后.====
 		case ap := <-s.r.apply():
+			fmt.Println("[server.go]接收到apply消息")
 			f := func(context.Context) { s.applyAll(&ep, &ap) }
 			sched.Schedule(f)
 		case leases := <-expiredLeaseC:
@@ -1087,13 +1097,16 @@ func (s *EtcdServer) run() {
 	}
 }
 
+//====状态机进行apply操作
 func (s *EtcdServer) applyAll(ep *etcdProgress, apply *apply) {
+	fmt.Println("server.go  applyAll.")
 	s.applySnapshot(ep, apply)
 	s.applyEntries(ep, apply)
 
 	proposalsApplied.Set(float64(ep.appliedi))
 	s.applyWait.Trigger(ep.appliedi)
 
+	//=======这里会等待 raft协程,完成持久化.查看 [raft]-[start]========
 	// wait for the raft routine to finish the disk writes before triggering a
 	// snapshot. or applied index might be greater than the last index in raft
 	// storage, since the raft routine might be slower than apply routine.

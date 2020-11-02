@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -94,9 +95,15 @@ func (baseReadTx *baseReadTx) UnsafeRange(bucketName, key, endKey []byte, limit 
 	//!!1.如果读事务的缓存里有对应数据,就不用返回了.那么这个缓存是从哪里塞入的呢?是在创建concurrentReadTx的时候 从Backend里copy的
 	keys, vals := baseReadTx.buf.Range(bucketName, key, endKey, limit)
 	if int64(len(keys)) == limit {
+		s := time.Now().Second()
+		if s%2 == 0 {
+			fmt.Println("[" + string(key) + "],sleep 200s")
+			time.Sleep(200 * time.Second)
+		}
+		fmt.Println("[" + string(key) + "],恭喜命中buffer,直接从buffer中返回")
 		return keys, vals
 	}
-	fmt.Print("并没有命中buffer,所以去boltdb中查询")
+	fmt.Println("[" + string(key) + "],并没有命中buffer,所以去boltdb中查询")
 	//2.没办法,buffer没有,那么只能去boltdb去查询了
 	// find/cache bucket
 	bn := string(bucketName)

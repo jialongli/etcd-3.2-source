@@ -111,6 +111,7 @@ type kv struct {
 	val []byte
 }
 
+//===========bucketBuffer 存储了正在提交的kv数据.{1.kv对数组  }=========
 // bucketBuffer buffers key-value pairs that are pending commit.
 type bucketBuffer struct {
 	buf []kv

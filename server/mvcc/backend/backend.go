@@ -230,7 +230,6 @@ func (b *backend) ConcurrentReadTx() ReadTx {
 	defer b.readTx.RUnlock()
 	// prevent boltdb read Tx from been rolled back until store read Tx is done. Needs to be called when holding readTx.RLock().
 	b.readTx.txWg.Add(1)
-	fmt.Print(&b)
 	// TODO: might want to copy the read buffer lazily - create copy when A) end of a write transaction B) end of a batch interval.
 	return &concurrentReadTx{
 		baseReadTx: baseReadTx{

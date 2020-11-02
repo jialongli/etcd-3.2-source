@@ -173,7 +173,9 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 			select {
 			case <-r.ticker.C:
 				r.tick()
+				//处理之后,会封装一个
 			case rd := <-r.Ready():
+				fmt.Println("从ready通道中取出来")
 				if rd.SoftState != nil {
 					newLeader := rd.SoftState.Lead != raft.None && rh.getLead() != rd.SoftState.Lead
 					if newLeader {
@@ -207,16 +209,20 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					}
 				}
 
+				//1.定义一个通知通道 notifyChannel
 				notifyc := make(chan struct{}, 1)
+				//2.定义一个apply结构
 				ap := apply{
 					entries:  rd.CommittedEntries,
 					snapshot: rd.Snapshot,
-					notifyc:  notifyc,
+					//2.1 这个notifyC目前是空的,啥时候赋值捏?肯定是完成了commit的操作(写wal,更新index)
+					notifyc: notifyc,
 				}
-
+				//3.更新committedIndex.
 				updateCommittedIndex(&ap, rh)
 
 				select {
+				//4.将ap写入到r.applyc.这个通道用来把apply的数据发出去
 				case r.applyc <- ap:
 				case <-r.stopped:
 					return
@@ -227,9 +233,12 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 				// For more details, check raft thesis 10.2.1
 				if islead {
 					// gofail: var raftBeforeLeaderSend struct{}
+					//=====!!!5.如果是leader,需要把commit的好消息发送给follower,让他们也同步数据=====
+					//====5.2如果不是leader,说明就是follower,这个数据就是leader发过来的=======
 					r.transport.Send(r.processMessages(rd.Messages))
 				}
 
+				//======6.开始存储 snapshot======
 				// Must save the snapshot file and WAL snapshot entry before saving any other entries or hardstate to
 				// ensure that recovery after a snapshot restore is possible.
 				if !raft.IsEmptySnap(rd.Snapshot) {
@@ -240,6 +249,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					// gofail: var raftAfterSaveSnap struct{}
 				}
 
+				//======7.开始存储wal========
 				// gofail: var raftBeforeSave struct{}
 				if err := r.storage.Save(rd.HardState, rd.Entries); err != nil {
 					r.lg.Fatal("failed to save Raft hard state and entries", zap.Error(err))
@@ -258,9 +268,11 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 						r.lg.Fatal("failed to sync Raft snapshot", zap.Error(err))
 					}
 
+					// ======8.etcdServer 现在就可以宣称 snapshot已经持久化到磁盘上啦=======
 					// etcdserver now claim the snapshot has been persisted onto the disk
 					notifyc <- struct{}{}
 
+					//9.将内存中的snapshot替换为新的snapshot
 					// gofail: var raftBeforeApplySnap struct{}
 					r.raftStorage.ApplySnapshot(rd.Snapshot)
 					r.lg.Info("applied incoming Raft snapshot", zap.Uint64("snapshot-index", rd.Snapshot.Metadata.Index))
@@ -272,8 +284,10 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					// gofail: var raftAfterWALRelease struct{}
 				}
 
+				//TODO 10.存储到内存的???????????????
 				r.raftStorage.Append(rd.Entries)
 
+				//11.如果不是leader的话,会怎么办?
 				if !islead {
 					// finish processing incoming messages before we signal raftdone chan
 					msgs := r.processMessages(rd.Messages)
@@ -321,6 +335,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 	}()
 }
 
+//===更新committedIndex,这时候已经确定commit了==
 func updateCommittedIndex(ap *apply, rh *raftReadyHandler) {
 	var ci uint64
 	if len(ap.entries) != 0 {
@@ -475,6 +490,7 @@ func startNode(cfg ServerConfig, cl *membership.RaftCluster, ids []types.ID) (id
 	if len(peers) == 0 {
 		n = raft.RestartNode(c)
 	} else {
+		//主要逻辑
 		n = raft.StartNode(c, peers)
 	}
 	raftStatusMu.Lock()
